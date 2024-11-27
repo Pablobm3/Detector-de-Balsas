@@ -1,0 +1,70 @@
+import os
+import numpy as np
+from PIL import Image
+import cv2
+
+def crear_mascara_mejorada(imagen_path, salida_path, color_balsa=((17, 9, 27), (47, 12, 101))):
+    """
+    Crea una máscara binaria detectando balsas por color y forma geométrica,
+    mejorada para incluir balsas más pequeñas y refinar los contornos.
+
+    Args:
+        imagen_path (str): Ruta de la imagen original.
+        salida_path (str): Ruta para guardar la máscara generada.
+        color_balsa (tuple): Rango de color RGB para detectar balsas (mín, máx).
+    """
+    # Cargar imagen
+    imagen = np.array(Image.open(imagen_path))
+
+    # Convertir a espacio HSV
+    imagen_hsv = cv2.cvtColor(imagen, cv2.COLOR_RGB2HSV)
+
+    # Crear máscara basada en el rango de color
+    minima = np.array(color_balsa[0], dtype=np.uint8)
+    maxima = np.array(color_balsa[1], dtype=np.uint8)
+    mascara_color = cv2.inRange(imagen, minima, maxima)
+
+    # Transformaciones morfológicas para limpiar la máscara
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    mascara_morfo = cv2.morphologyEx(mascara_color, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mascara_morfo = cv2.morphologyEx(mascara_morfo, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    # Suavizar bordes para contornos más precisos
+    mascara_suavizada = cv2.GaussianBlur(mascara_morfo, (5, 5), 0)
+
+    # Encontrar contornos
+    contornos, _ = cv2.findContours(mascara_suavizada, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    mascara_final = np.zeros_like(mascara_morfo)
+
+    # Filtrar contornos basados en forma y tamaño
+    for contorno in contornos:
+        # Calcular características del contorno
+        area = cv2.contourArea(contorno)
+        perimetro = cv2.arcLength(contorno, True)
+        x, y, w, h = cv2.boundingRect(contorno)
+
+        # Filtros geométricos
+        if area > 3:  # Detectar balsas pequeñas
+            relacion_aspecto = w / h if w > h else h / w
+            circularidad = (4 * np.pi * area) / (perimetro ** 2) if perimetro > 0 else 0
+
+            # Aceptar contornos rectangulares o cuadrados con baja circularidad
+            if 0.5 <= relacion_aspecto <= 5.0 and circularidad < 100:
+                # Agregar contorno a la máscara final
+                cv2.drawContours(mascara_final, [contorno], -1, 255, -1)
+
+    # Guardar la máscara generada
+    Image.fromarray(mascara_final).save(salida_path)
+
+# Generar máscaras con el nuevo método
+directorio_imagenes = "/content/drive/MyDrive/imagenes_balsas/"
+nombres_imagenes = [f"Balsa{i}.jpg" for i in range(1, 26)]
+salida_mascaras = "/content/drive/MyDrive/imagenes_balsas/Mascaras/prueba/"
+
+os.makedirs(salida_mascaras, exist_ok=True)  # Crear directorio si no existe
+
+for nombre in nombres_imagenes:
+    crear_mascara_mejorada(
+        os.path.join(directorio_imagenes, nombre),
+        os.path.join(salida_mascaras, nombre.split('.')[0] + "_mask.jpg")
+    )
